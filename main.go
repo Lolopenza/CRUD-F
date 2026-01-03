@@ -240,8 +240,54 @@ func updateUser(db *sql.DB, num_id int, email, name, surname string) (User, erro
 	return u, nil
 }
 
-func deleteuserHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "deleteuserHandler")
+func deleteuserHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+
+		vars := mux.Vars(r)
+		id := vars["id"]
+
+		num_id, err := strconv.Atoi(id)
+		if err != nil || num_id < 1 {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+
+		err = deleteUser(db, num_id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "user not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, " server issue", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func deleteUser(db *sql.DB, num_id int) error {
+	query := `
+			DELETE FROM users
+			WHERE usr_id = $1
+			`
+
+	res, err := db.Exec(query, num_id)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return err
 }
 
 func main() {
@@ -255,7 +301,7 @@ func main() {
 	router.HandleFunc("/users", recieveallusersHandler(db)).Methods("GET")
 	router.HandleFunc("/users/{id}", getuserHandler(db)).Methods("GET")
 	router.HandleFunc("/users/{id}", changeuserHandler(db)).Methods("PUT")
-	router.HandleFunc("/users/{id}", deleteuserHandler).Methods("DELETE")
+	router.HandleFunc("/users/{id}", (deleteuserHandler(db))).Methods("DELETE")
 
 	defer db.Close()
 
