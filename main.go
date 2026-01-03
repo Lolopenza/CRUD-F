@@ -3,9 +3,11 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -21,8 +23,8 @@ type User struct {
 	Email      string    `json:"email"`
 	Name       string    `json:"name"`
 	Surname    string    `json:"surname"`
-	Created_At time.Time `json:"created_at"`
-	Updated_At time.Time `json:"updated_at"`
+	Created_At time.Time `json:"created_at,omitempty"`
+	Updated_At time.Time `json:"updated_at,omitempty"`
 }
 
 func healthcheckHandler(w http.ResponseWriter, r *http.Request) {
@@ -64,16 +66,178 @@ func createUser(db *sql.DB, email, name, surname string) (int, error) {
 	return id, err
 }
 
-func recieveallusersHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "recieveallusersHandler")
+func recieveallusersHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var users []User
+
+		users, err := getAllUsers(db)
+		if err != nil {
+			http.Error(w, "error on getting db side", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		if err := json.NewEncoder(w).Encode(users); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+	}
 }
 
-func getuserHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "getuserHandler")
+func getAllUsers(db *sql.DB) ([]User, error) {
+	rows, err := db.Query(`SELECT usr_id, email, name, surname FROM users`)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	var users []User
+
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.User_ID, &u.Email, &u.Name, &u.Surname); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+
+	return users, nil
 }
 
-func changeuserHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "changeuserHandler")
+func getuserHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var user User
+
+		vars := mux.Vars(r)
+		id := vars["id"]
+
+		num_id, err := strconv.Atoi(id)
+		if err != nil || num_id < 1 {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+
+		user, err = gettingUser(db, num_id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "user not found", http.StatusNotFound)
+				return
+			} else {
+				http.Error(w, " server issue", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		if err := json.NewEncoder(w).Encode(user); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+	}
+}
+
+func gettingUser(db *sql.DB, num_id int) (User, error) {
+	var u User
+
+	query := `SELECT usr_id, email, name, surname
+			FROM users
+			WHERE usr_id = $1`
+
+	err := db.QueryRow(query, num_id).Scan(&u.User_ID, &u.Email, &u.Name, &u.Surname)
+	if err != nil {
+		return u, err
+	}
+
+	return u, nil
+}
+
+func changeuserHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var user User
+
+		vars := mux.Vars(r)
+		id := vars["id"]
+
+		num_id, err := strconv.Atoi(id)
+		if err != nil || num_id < 1 {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+
+		user, err = gettingUser(db, num_id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "user not found", http.StatusNotFound)
+				return
+			} else {
+				http.Error(w, " server issue", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		var input struct {
+			Email   string `json:"email"`
+			Name    string `json:"name"`
+			Surname string `json:"surname"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		user.Email = input.Email
+		user.Name = input.Name
+		user.Surname = input.Surname
+
+		user, err = updateUser(db, num_id, user.Email, user.Name, user.Surname)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "user not found", http.StatusNotFound)
+				return
+			} else {
+				http.Error(w, " server issue", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		if err := json.NewEncoder(w).Encode(user); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+	}
+}
+
+func updateUser(db *sql.DB, num_id int, email, name, surname string) (User, error) {
+	var u User
+
+	query := `
+		UPDATE users
+		SET email = $1, name = $2, surname = $3, updated_at = now()
+		WHERE usr_id = $4
+		RETURNING usr_id, email, name, surname, created_at, updated_at
+	`
+
+	err := db.QueryRow(query, email, name, surname, num_id).
+		Scan(&u.User_ID, &u.Email, &u.Name, &u.Surname, &u.Created_At, &u.Updated_At)
+
+	if err != nil {
+		return u, err
+	}
+
+	return u, nil
 }
 
 func deleteuserHandler(w http.ResponseWriter, r *http.Request) {
@@ -88,9 +252,9 @@ func main() {
 	router.HandleFunc("/healthcheck", healthcheckHandler).Methods("GET")
 
 	router.HandleFunc("/users", createuserHandler(db)).Methods("POST")
-	router.HandleFunc("/users", recieveallusersHandler).Methods("GET")
-	router.HandleFunc("/users/{id}", getuserHandler).Methods("GET")
-	router.HandleFunc("/users/{id}", changeuserHandler).Methods("PUT")
+	router.HandleFunc("/users", recieveallusersHandler(db)).Methods("GET")
+	router.HandleFunc("/users/{id}", getuserHandler(db)).Methods("GET")
+	router.HandleFunc("/users/{id}", changeuserHandler(db)).Methods("PUT")
 	router.HandleFunc("/users/{id}", deleteuserHandler).Methods("DELETE")
 
 	defer db.Close()
