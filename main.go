@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -33,25 +34,36 @@ func healthcheckHandler(w http.ResponseWriter, r *http.Request) {
 
 func createuserHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+
 		defer r.Body.Close()
 		var user User
 
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			if r.Header.Get("Content-Type") != "application/json" {
+				writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+				return
+			}
+		}
+
 		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Invalid JSON")
 			return
 		}
 
 		id, err := createUser(db, user.Email, user.Name, user.Surname)
 		if err != nil {
-			http.Error(w, "Cannot create user", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "Cannot create user")
 			log.Println("createUser error:", err)
 			return
 		}
 
-		w.WriteHeader(http.StatusCreated)
-		fmt.Fprintf(w, "User created successfully with id %d\n", id)
-	}
+		err = writeJSON(w, http.StatusCreated, map[string]int{"id": id})
+		if err != nil {
+			log.Println("writeJSON failed:", err)
+			return
+		}
 
+	}
 }
 
 func createUser(db *sql.DB, email, name, surname string) (int, error) {
@@ -68,22 +80,20 @@ func createUser(db *sql.DB, email, name, surname string) (int, error) {
 
 func recieveallusersHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
 		var users []User
 
 		users, err := getAllUsers(db)
 		if err != nil {
-			http.Error(w, "error on getting db side", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "error on getting db side")
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-
-		if err := json.NewEncoder(w).Encode(users); err != nil {
-			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		err = writeJSON(w, http.StatusOK, users)
+		if err != nil {
+			log.Println("writeJSON failed:", err)
 			return
 		}
+
 	}
 }
 
@@ -110,7 +120,6 @@ func getAllUsers(db *sql.DB) ([]User, error) {
 
 func getuserHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
 		var user User
 
 		vars := mux.Vars(r)
@@ -118,26 +127,24 @@ func getuserHandler(db *sql.DB) http.HandlerFunc {
 
 		num_id, err := strconv.Atoi(id)
 		if err != nil || num_id < 1 {
-			http.Error(w, "invalid id", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "invalid id")
 			return
 		}
 
 		user, err = gettingUser(db, num_id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				http.Error(w, "user not found", http.StatusNotFound)
+				writeError(w, http.StatusNotFound, "user not found")
 				return
 			} else {
-				http.Error(w, " server issue", http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, "server issue")
 				return
 			}
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-
-		if err := json.NewEncoder(w).Encode(user); err != nil {
-			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		err = writeJSON(w, http.StatusOK, user)
+		if err != nil {
+			log.Println("writeJSON failed:", err)
 			return
 		}
 
@@ -161,6 +168,7 @@ func gettingUser(db *sql.DB, num_id int) (User, error) {
 
 func changeuserHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+
 		defer r.Body.Close()
 		var user User
 
@@ -169,17 +177,17 @@ func changeuserHandler(db *sql.DB) http.HandlerFunc {
 
 		num_id, err := strconv.Atoi(id)
 		if err != nil || num_id < 1 {
-			http.Error(w, "invalid id", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "invalid id")
 			return
 		}
 
 		user, err = gettingUser(db, num_id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				http.Error(w, "user not found", http.StatusNotFound)
+				writeError(w, http.StatusNotFound, "user not found")
 				return
 			} else {
-				http.Error(w, " server issue", http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, "server issue")
 				return
 			}
 		}
@@ -190,8 +198,15 @@ func changeuserHandler(db *sql.DB) http.HandlerFunc {
 			Surname string `json:"surname"`
 		}
 
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			if r.Header.Get("Content-Type") != "application/json" {
+				writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+				return
+			}
+		}
+
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Invalid JSON")
 			return
 		}
 
@@ -202,19 +217,17 @@ func changeuserHandler(db *sql.DB) http.HandlerFunc {
 		user, err = updateUser(db, num_id, user.Email, user.Name, user.Surname)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				http.Error(w, "user not found", http.StatusNotFound)
+				writeError(w, http.StatusNotFound, "user not found")
 				return
 			} else {
-				http.Error(w, " server issue", http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, "server issue")
 				return
 			}
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-
-		if err := json.NewEncoder(w).Encode(user); err != nil {
-			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		err = writeJSON(w, http.StatusOK, user)
+		if err != nil {
+			log.Println("writeJSON failed:", err)
 			return
 		}
 	}
@@ -242,7 +255,6 @@ func updateUser(db *sql.DB, num_id int, email, name, surname string) (User, erro
 
 func deleteuserHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
 
 		vars := mux.Vars(r)
 		id := vars["id"]
@@ -256,10 +268,10 @@ func deleteuserHandler(db *sql.DB) http.HandlerFunc {
 		err = deleteUser(db, num_id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				http.Error(w, "user not found", http.StatusNotFound)
+				writeError(w, http.StatusNotFound, "user not found")
 				return
 			}
-			http.Error(w, " server issue", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "server issue")
 			return
 		}
 
@@ -288,6 +300,23 @@ func deleteUser(db *sql.DB, num_id int) error {
 	}
 
 	return err
+}
+
+func writeJSON(w http.ResponseWriter, statuscode int, data any) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statuscode)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	if err := writeJSON(w, status, map[string]string{
+		"error": message,
+	}); err != nil {
+		log.Println(err)
+	}
 }
 
 func main() {
