@@ -2,42 +2,73 @@
 
 Simple RESTful CRUD API written in Go using `net/http`, `gorilla/mux`, and PostgreSQL.
 
-This project was built for learning purposes and covers:
-- Clean project structure
-- Handlers / repository separation
-- Context usage
-- Timeouts
-- Graceful shutdown
+This project was built for learning purposes and demonstrates:
+- Clean and modular project structure
+- Separation of handlers and repositories
+- Context usage and request timeouts
+- Graceful shutdown handling
+- JSON response helpers
 
 ---
 
 ## 🚀 Features
 
-- Create user
-- Get all users
-- Get user by ID
-- Update user
-- Delete user
-- PostgreSQL database
+- Create, read, update, and delete user records
+- PostgreSQL integration
 - Request context with timeout
-- Server timeouts
-- Graceful shutdown
-- JSON helpers for responses
+- Server read/write timeouts
+- Graceful shutdown on interrupt
+- Helper utilities for JSON and error responses
 
 ---
 
 ## 🧱 Project Structure
 
+```
 .
 ├── cmd/
 │   └── api/
-│       └── main.go        # application entry point
+│       └── main.go            # Application entry point
 │
 ├── internal/
-│   ├── handlers/          # HTTP handlers (HTTP layer)
-│   ├── repository/        # DB logic (data layer)
-│   ├── models/            # domain models
-│   └── httphelper/        # JSON & error helpers
+│   ├── handlers/              # HTTP handlers (API layer)
+│   ├── repository/            # Database logic (data access layer)
+│   ├── models/                # Domain models
+│   └── httphelper/            # JSON & error handling utilities
 │
 ├── go.mod
 └── README.md
+```
+
+---
+
+## ▶️ Running the Project
+
+Make sure PostgreSQL is running and accessible. Then run the app:
+
+```bash
+go run cmd/api/main.go
+```
+
+By default, the server starts on:
+
+**http://localhost:3838**
+
+---
+
+## 📡 API Endpoints
+
+### Health Check
+**GET** `/healthcheck`  
+Returns server status and uptime info.
+
+### Users
+| Method | Endpoint        | Description        |
+|:-------|:----------------|:------------------|
+| POST   | `/users`        | Create a new user |
+| GET    | `/users`        | Get all users     |
+| GET    | `/users/{id}`   | Get user by ID    |
+| PUT    | `/users/{id}`   | Update user by ID |
+| DELETE | `/users/{id}`   | Delete user by ID |
+
+---
