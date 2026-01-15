@@ -28,3 +28,16 @@ This project was built for learning purposes and covers:
 
 ## 🧱 Project Structure
 
+.
+├── cmd/
+│   └── api/
+│       └── main.go        # application entry point
+│
+├── internal/
+│   ├── handlers/          # HTTP handlers (HTTP layer)
+│   ├── repository/        # DB logic (data layer)
+│   ├── models/            # domain models
+│   └── httphelper/        # JSON & error helpers
+│
+├── go.mod
+└── README.md
