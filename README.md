@@ -1,8 +1,8 @@
 # CRUD API (Go + PostgreSQL)
 
-Simple RESTful CRUD API written in Go using `net/http`, `gorilla/mux`, and PostgreSQL.
+Backend REST API service written in Go using `net/http`, `gorilla/mux`, and PostgreSQL.
 
-This project was built for learning purposes and demonstrates:
+Designed to follow real-world backend patterns and demonstrates:
 - Clean and modular project structure
 - Separation of handlers and repositories
 - Context usage and request timeouts
