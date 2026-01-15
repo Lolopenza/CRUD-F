@@ -2,10 +2,15 @@ package main
 
 import (
 	"Lolopenza/CRUD-F/internal/handlers"
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
@@ -16,11 +21,10 @@ const (
 )
 
 func main() {
-	//ctx, cancel := context.WithTimeout(context.Background(), 24)
+	db := DB_init()
+	defer db.Close()
 
 	router := mux.NewRouter()
-
-	db := DB_init()
 
 	router.HandleFunc("/healthcheck", handlers.HealthcheckHandler).Methods("GET")
 
@@ -30,10 +34,39 @@ func main() {
 	router.HandleFunc("/users/{id}", handlers.ChangeUserHandler(db)).Methods("PUT")
 	router.HandleFunc("/users/{id}", (handlers.DeleteUserHandler(db))).Methods("DELETE")
 
-	defer db.Close()
+	srv := &http.Server{
+		Addr:         ":3838",
+		Handler:      router,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 
-	fmt.Println("Server starting on port :3838")
-	log.Fatal(http.ListenAndServe(":3838", router))
+	go func() {
+		log.Println("server started on :3838")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen error: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+
+	log.Println("shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("server shutdown failed: %v", err)
+	}
+
+	if err := db.Close(); err != nil {
+		log.Println("db close error:", err)
+	}
+
+	log.Println("server exited gracefully")
 }
 
 func DB_init() *sql.DB {
