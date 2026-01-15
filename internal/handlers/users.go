@@ -4,6 +4,7 @@ import (
 	httphelper "Lolopenza/CRUD-F/internal/http-helper"
 	"Lolopenza/CRUD-F/internal/models"
 	"Lolopenza/CRUD-F/internal/repository"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -22,6 +24,8 @@ func HealthcheckHandler(w http.ResponseWriter, r *http.Request) {
 
 func CreateUserHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
 
 		defer r.Body.Close()
 		var user models.User
@@ -38,7 +42,7 @@ func CreateUserHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		id, err := repository.CreateUser(db, user.Email, user.Name, user.Surname)
+		id, err := repository.CreateUser(ctx, db, user.Email, user.Name, user.Surname)
 		if err != nil {
 			httphelper.WriteError(w, http.StatusInternalServerError, "Cannot create user")
 			log.Println("createUser error:", err)
@@ -56,9 +60,12 @@ func CreateUserHandler(db *sql.DB) http.HandlerFunc {
 
 func RecieveAllUsersHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
 		var users []models.User
 
-		users, err := repository.GetAllUsers(db)
+		users, err := repository.GetAllUsers(ctx, db)
 		if err != nil {
 			httphelper.WriteError(w, http.StatusInternalServerError, "error on getting db side")
 			return
@@ -75,6 +82,9 @@ func RecieveAllUsersHandler(db *sql.DB) http.HandlerFunc {
 
 func GetUserHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
 		var user models.User
 
 		vars := mux.Vars(r)
@@ -86,8 +96,16 @@ func GetUserHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		user, err = repository.GettingUser(db, num_id)
+		user, err = repository.GettingUser(ctx, db, num_id)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				log.Println("request canceled by user")
+				return
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				httphelper.WriteError(w, http.StatusGatewayTimeout, "request timeout")
+				return
+			}
 			if errors.Is(err, sql.ErrNoRows) {
 				httphelper.WriteError(w, http.StatusNotFound, "user not found")
 				return
@@ -108,6 +126,8 @@ func GetUserHandler(db *sql.DB) http.HandlerFunc {
 
 func ChangeUserHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
 
 		defer r.Body.Close()
 		var user models.User
@@ -121,8 +141,17 @@ func ChangeUserHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		user, err = repository.GettingUser(db, num_id)
+		user, err = repository.GettingUser(ctx, db, num_id)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				log.Println("request canceled by user ")
+				return
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				httphelper.WriteError(w, http.StatusBadGateway, "request timeout")
+				return
+			}
+
 			if errors.Is(err, sql.ErrNoRows) {
 				httphelper.WriteError(w, http.StatusNotFound, "user not found")
 				return
@@ -154,7 +183,7 @@ func ChangeUserHandler(db *sql.DB) http.HandlerFunc {
 		user.Name = input.Name
 		user.Surname = input.Surname
 
-		user, err = repository.UpdateUser(db, num_id, user.Email, user.Name, user.Surname)
+		user, err = repository.UpdateUser(ctx, db, num_id, user.Email, user.Name, user.Surname)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				httphelper.WriteError(w, http.StatusNotFound, "user not found")
@@ -175,6 +204,8 @@ func ChangeUserHandler(db *sql.DB) http.HandlerFunc {
 
 func DeleteUserHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
 
 		vars := mux.Vars(r)
 		id := vars["id"]
@@ -185,7 +216,7 @@ func DeleteUserHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		err = repository.DeleteUser(db, num_id)
+		err = repository.DeleteUser(ctx, db, num_id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				httphelper.WriteError(w, http.StatusNotFound, "user not found")

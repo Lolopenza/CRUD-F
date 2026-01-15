@@ -16,6 +16,8 @@ const (
 )
 
 func main() {
+	//ctx, cancel := context.WithTimeout(context.Background(), 24)
+
 	router := mux.NewRouter()
 
 	db := DB_init()
