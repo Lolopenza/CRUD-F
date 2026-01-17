@@ -1,10 +1,10 @@
 package main
 
 import (
+	"Lolopenza/CRUD-F/internal/config"
+	"Lolopenza/CRUD-F/internal/db"
 	"Lolopenza/CRUD-F/internal/handlers"
 	"context"
-	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -16,26 +16,25 @@ import (
 	_ "github.com/lib/pq"
 )
 
-const (
-	dsn = "postgres://anvar:1234@localhost:5432/crud_api?sslmode=disable"
-)
-
 func main() {
-	db := DB_init()
-	defer db.Close()
+
+	cfg := config.Load()
+
+	database := db.New(cfg.DB.DSN)
+	defer database.Close()
 
 	router := mux.NewRouter()
 
 	router.HandleFunc("/healthcheck", handlers.HealthcheckHandler).Methods("GET")
 
-	router.HandleFunc("/users", handlers.CreateUserHandler(db)).Methods("POST")
-	router.HandleFunc("/users", handlers.RecieveAllUsersHandler(db)).Methods("GET")
-	router.HandleFunc("/users/{id}", handlers.GetUserHandler(db)).Methods("GET")
-	router.HandleFunc("/users/{id}", handlers.ChangeUserHandler(db)).Methods("PUT")
-	router.HandleFunc("/users/{id}", (handlers.DeleteUserHandler(db))).Methods("DELETE")
+	router.HandleFunc("/users", handlers.CreateUserHandler(database)).Methods("POST")
+	router.HandleFunc("/users", handlers.RecieveAllUsersHandler(database)).Methods("GET")
+	router.HandleFunc("/users/{id}", handlers.GetUserHandler(database)).Methods("GET")
+	router.HandleFunc("/users/{id}", handlers.ChangeUserHandler(database)).Methods("PUT")
+	router.HandleFunc("/users/{id}", (handlers.DeleteUserHandler(database))).Methods("DELETE")
 
 	srv := &http.Server{
-		Addr:         ":3838",
+		Addr:         ":" + cfg.Server.Port,
 		Handler:      router,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
@@ -43,7 +42,7 @@ func main() {
 	}
 
 	go func() {
-		log.Println("server started on :3838")
+		log.Println("server started on :" + cfg.Server.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen error: %v", err)
 		}
@@ -62,26 +61,9 @@ func main() {
 		log.Printf("server shutdown failed: %v", err)
 	}
 
-	if err := db.Close(); err != nil {
+	if err := database.Close(); err != nil {
 		log.Println("db close error:", err)
 	}
 
 	log.Println("server exited gracefully")
 }
-
-func DB_init() *sql.DB {
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if err = db.Ping(); err != nil {
-		log.Fatal(err)
-	} else {
-		fmt.Println("Connected to db successfully!")
-	}
-
-	return db
-}
-
-//"postgres://anvar:1234@localhost:5432/crud_api"
