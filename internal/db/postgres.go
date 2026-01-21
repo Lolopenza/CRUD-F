@@ -3,20 +3,22 @@ package db
 import (
 	"database/sql"
 	"log"
+	"log/slog"
 )
 
-func New(dsn string) *sql.DB {
-
+func New(dsn string, logger *slog.Logger) *sql.DB {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
+		logger.Error("failed to open database", "err", err)
 		log.Fatal(err)
 	}
 
 	if err = db.Ping(); err != nil {
+		logger.Error("failed to ping database", "err", err)
 		log.Fatal(err)
 	}
 
-	log.Println("Connected to DB")
+	logger.Info("Connected to DB")
 	return db
 
 }

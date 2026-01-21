@@ -3,13 +3,13 @@ package handlers
 import (
 	httphelper "Lolopenza/CRUD-F/internal/http-helper"
 	"Lolopenza/CRUD-F/internal/models"
-	"Lolopenza/CRUD-F/internal/repository"
+	"Lolopenza/CRUD-F/internal/service"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,214 +18,166 @@ import (
 	"github.com/gorilla/mux"
 )
 
+type UserHandler struct {
+	Service *service.UserService
+	Logger  *slog.Logger
+}
+
+func NewUserHandler(svc *service.UserService, logger *slog.Logger) *UserHandler {
+	return &UserHandler{
+		Service: svc,
+		Logger:  logger,
+	}
+}
+
 func HealthcheckHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Server is up!")
 }
 
-func CreateUserHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
+func (h *UserHandler) CreateUserHandler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	defer r.Body.Close()
 
-		defer r.Body.Close()
-		var user models.User
+	var user models.User
 
-		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-			if r.Header.Get("Content-Type") != "application/json" {
-				httphelper.WriteError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
-				return
-			}
-		}
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		httphelper.WriteError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
 
-		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-			httphelper.WriteError(w, http.StatusBadRequest, "Invalid JSON")
-			return
-		}
+	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+		h.Logger.Warn("Invalid JSON", "err", err)
+		httphelper.WriteError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
 
-		id, err := repository.CreateUser(ctx, db, user.Email, user.Name, user.Surname)
-		if err != nil {
-			httphelper.WriteError(w, http.StatusInternalServerError, "Cannot create user")
-			log.Println("createUser error:", err)
-			return
-		}
+	id, err := h.Service.CreateUser(ctx, user.Email, user.Name, user.Surname)
+	if err != nil {
+		h.Logger.Error("createUser error", "err", err)
+		httphelper.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-		err = httphelper.WriteJSON(w, http.StatusCreated, map[string]int{"id": id})
-		if err != nil {
-			log.Println("writeJSON failed:", err)
-			return
-		}
-
+	err = httphelper.WriteJSON(w, http.StatusCreated, map[string]int{"id": id})
+	if err != nil {
+		h.Logger.Error("writeJSON failed", "err", err)
+		return
 	}
 }
 
-func RecieveAllUsersHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
+func (h *UserHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
 
-		var users []models.User
+	users, err := h.Service.GetAllUsers(ctx)
+	if err != nil {
+		h.Logger.Error("failed to get users", "err", err)
+		httphelper.WriteError(w, http.StatusInternalServerError, "failed to get users")
+		return
+	}
 
-		users, err := repository.GetAllUsers(ctx, db)
-		if err != nil {
-			httphelper.WriteError(w, http.StatusInternalServerError, "error on getting db side")
-			return
-		}
-
-		err = httphelper.WriteJSON(w, http.StatusOK, users)
-		if err != nil {
-			log.Println("writeJSON failed:", err)
-			return
-		}
-
+	if err := httphelper.WriteJSON(w, http.StatusOK, users); err != nil {
+		h.Logger.Warn("writeJSON failed", "err", err)
 	}
 }
 
-func GetUserHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
+func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
 
-		var user models.User
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil || id < 1 {
+		h.Logger.Warn("invalid id", "err", err)
+		httphelper.WriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
 
-		vars := mux.Vars(r)
-		id := vars["id"]
-
-		num_id, err := strconv.Atoi(id)
-		if err != nil || num_id < 1 {
-			httphelper.WriteError(w, http.StatusBadRequest, "invalid id")
+	user, err := h.Service.GetUserByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.Logger.Warn("user not found", "err", err)
+			httphelper.WriteError(w, http.StatusNotFound, "user not found")
 			return
 		}
+		h.Logger.Error("failed to get user", "err", err)
+		httphelper.WriteError(w, http.StatusInternalServerError, "server issue")
+		return
+	}
 
-		user, err = repository.GettingUser(ctx, db, num_id)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				log.Println("request canceled by user")
-				return
-			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				httphelper.WriteError(w, http.StatusGatewayTimeout, "request timeout")
-				return
-			}
-			if errors.Is(err, sql.ErrNoRows) {
-				httphelper.WriteError(w, http.StatusNotFound, "user not found")
-				return
-			} else {
-				httphelper.WriteError(w, http.StatusInternalServerError, "server issue")
-				return
-			}
-		}
-
-		err = httphelper.WriteJSON(w, http.StatusOK, user)
-		if err != nil {
-			log.Println("writeJSON failed:", err)
-			return
-		}
-
+	if err := httphelper.WriteJSON(w, http.StatusOK, user); err != nil {
+		h.Logger.Warn("writeJSON failed", "err", err)
 	}
 }
 
-func ChangeUserHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
+func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	defer r.Body.Close()
 
-		defer r.Body.Close()
-		var user models.User
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil || id < 1 {
+		h.Logger.Warn("invalid id", "err", err)
+		httphelper.WriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
 
-		vars := mux.Vars(r)
-		id := vars["id"]
+	var input struct {
+		Email   string `json:"email"`
+		Name    string `json:"name"`
+		Surname string `json:"surname"`
+	}
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		httphelper.WriteError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		h.Logger.Warn("Invalid JSON", "err", err)
+		httphelper.WriteError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
 
-		num_id, err := strconv.Atoi(id)
-		if err != nil || num_id < 1 {
-			httphelper.WriteError(w, http.StatusBadRequest, "invalid id")
+	user, err := h.Service.UpdateUser(ctx, id, input.Email, input.Name, input.Surname)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.Logger.Warn("user not found", "err", err)
+			httphelper.WriteError(w, http.StatusNotFound, "user not found")
 			return
 		}
+		h.Logger.Error("failed to update user", "err", err)
+		httphelper.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
-		user, err = repository.GettingUser(ctx, db, num_id)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				log.Println("request canceled by user ")
-				return
-			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				httphelper.WriteError(w, http.StatusBadGateway, "request timeout")
-				return
-			}
-
-			if errors.Is(err, sql.ErrNoRows) {
-				httphelper.WriteError(w, http.StatusNotFound, "user not found")
-				return
-			} else {
-				httphelper.WriteError(w, http.StatusInternalServerError, "server issue")
-				return
-			}
-		}
-
-		var input struct {
-			Email   string `json:"email"`
-			Name    string `json:"name"`
-			Surname string `json:"surname"`
-		}
-
-		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-			if r.Header.Get("Content-Type") != "application/json" {
-				httphelper.WriteError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
-				return
-			}
-		}
-
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			httphelper.WriteError(w, http.StatusBadRequest, "Invalid JSON")
-			return
-		}
-
-		user.Email = input.Email
-		user.Name = input.Name
-		user.Surname = input.Surname
-
-		user, err = repository.UpdateUser(ctx, db, num_id, user.Email, user.Name, user.Surname)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				httphelper.WriteError(w, http.StatusNotFound, "user not found")
-				return
-			} else {
-				httphelper.WriteError(w, http.StatusInternalServerError, "server issue")
-				return
-			}
-		}
-
-		err = httphelper.WriteJSON(w, http.StatusOK, user)
-		if err != nil {
-			log.Println("writeJSON failed:", err)
-			return
-		}
+	if err := httphelper.WriteJSON(w, http.StatusOK, user); err != nil {
+		h.Logger.Warn("writeJSON failed", "err", err)
 	}
 }
 
-func DeleteUserHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
+func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
 
-		vars := mux.Vars(r)
-		id := vars["id"]
-
-		num_id, err := strconv.Atoi(id)
-		if err != nil || num_id < 1 {
-			http.Error(w, "invalid id", http.StatusBadRequest)
-			return
-		}
-
-		err = repository.DeleteUser(ctx, db, num_id)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				httphelper.WriteError(w, http.StatusNotFound, "user not found")
-				return
-			}
-			httphelper.WriteError(w, http.StatusInternalServerError, "server issue")
-			return
-		}
-
-		w.WriteHeader(http.StatusNoContent)
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil || id < 1 {
+		h.Logger.Warn("invalid id", "err", err)
+		httphelper.WriteError(w, http.StatusBadRequest, "invalid id")
+		return
 	}
+
+	if err := h.Service.DeleteUser(ctx, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.Logger.Warn("user not found", "err", err)
+			httphelper.WriteError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		h.Logger.Error("failed to delete user", "err", err)
+		httphelper.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

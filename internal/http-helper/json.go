@@ -19,6 +19,7 @@ func WriteError(w http.ResponseWriter, status int, message string) {
 	if err := WriteJSON(w, status, map[string]string{
 		"error": message,
 	}); err != nil {
+
 		log.Println(err)
 	}
 }

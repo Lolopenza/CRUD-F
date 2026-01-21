@@ -4,8 +4,10 @@ import (
 	"Lolopenza/CRUD-F/internal/config"
 	"Lolopenza/CRUD-F/internal/db"
 	"Lolopenza/CRUD-F/internal/handlers"
+	"Lolopenza/CRUD-F/internal/repository"
+	"Lolopenza/CRUD-F/internal/service"
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,22 +19,45 @@ import (
 )
 
 func main() {
+	// Logger
+	logger := slog.New(
+		slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		}),
+	).With(
+		slog.String("service", "crud-api"),
+	)
 
-	cfg := config.Load()
+	slog.SetDefault(logger)
 
-	database := db.New(cfg.DB.DSN)
+	// Config
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("failed to load config", "err", err)
+		os.Exit(1)
+	}
+	logger.Info("Config loaded")
+
+	// DB
+	database := db.New(cfg.DB.DSN, logger)
 	defer database.Close()
 
-	router := mux.NewRouter()
+	// DI: repository → service → handler
+	repo := repository.New(database)
+	service := service.NewUserService(repo)
+	handler := handlers.NewUserHandler(service, logger)
 
+	// Router
+	router := mux.NewRouter()
 	router.HandleFunc("/healthcheck", handlers.HealthcheckHandler).Methods("GET")
 
-	router.HandleFunc("/users", handlers.CreateUserHandler(database)).Methods("POST")
-	router.HandleFunc("/users", handlers.RecieveAllUsersHandler(database)).Methods("GET")
-	router.HandleFunc("/users/{id}", handlers.GetUserHandler(database)).Methods("GET")
-	router.HandleFunc("/users/{id}", handlers.ChangeUserHandler(database)).Methods("PUT")
-	router.HandleFunc("/users/{id}", (handlers.DeleteUserHandler(database))).Methods("DELETE")
+	router.HandleFunc("/users", handler.CreateUserHandler).Methods("POST")
+	router.HandleFunc("/users", handler.GetAllUsers).Methods("GET")
+	router.HandleFunc("/users/{id}", handler.GetUser).Methods("GET")
+	router.HandleFunc("/users/{id}", handler.UpdateUser).Methods("PUT")
+	router.HandleFunc("/users/{id}", handler.DeleteUser).Methods("DELETE")
 
+	// HTTP server
 	srv := &http.Server{
 		Addr:         ":" + cfg.Server.Port,
 		Handler:      router,
@@ -42,28 +67,30 @@ func main() {
 	}
 
 	go func() {
-		log.Println("server started on :" + cfg.Server.Port)
+		logger.Info(
+			"server started",
+			"port", srv.Addr,
+		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen error: %v", err)
+			logger.Error(
+				"listen error",
+				"err", err,
+			)
 		}
 	}()
 
+	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
 
-	log.Println("shutting down server...")
-
+	logger.Info("shutting down server")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("server shutdown failed: %v", err)
+		logger.Error("server shutdown failed", "err", err)
 	}
 
-	if err := database.Close(); err != nil {
-		log.Println("db close error:", err)
-	}
-
-	log.Println("server exited gracefully")
+	logger.Info("server exited gracefully")
 }
